@@ -124,7 +124,8 @@ with tab2:
             
             st.markdown("##### 📋 상세 집계 내역")
             display_df = df.sort_values(by="시간", ascending=False).reset_index(drop=True)
-            st.dataframe(display_df, use_container_width=True)
+            # 경고 메시지 해결: use_container_width=True 대신 width="stretch" 사용
+            st.dataframe(display_df, width="stretch")
         else:
             st.info("입력된 데이터가 없습니다.")
     except Exception as e:
@@ -140,7 +141,8 @@ with tab3:
     try:
         edit_df = conn.read(worksheet="Sheet1", ttl=0)
         if not edit_df.empty and "시간" in edit_df.columns:
-            edited_df = st.data_editor(edit_df, num_rows="dynamic", use_container_width=True, key="data_editor")
+            # 경고 메시지 해결: use_container_width=True 대신 width="stretch" 사용
+            edited_df = st.data_editor(edit_df, num_rows="dynamic", width="stretch", key="data_editor")
             
             if st.button("💾 수정된 데이터 DB에 반영하기"):
                 conn.update(worksheet="Sheet1", data=edited_df)
