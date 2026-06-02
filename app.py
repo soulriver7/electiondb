@@ -16,7 +16,7 @@ ballot_types = [
     "(비례대표)부산시의원"
 ]
 
-# 🚨 DB 연결 코드를 상단으로 이동 (사이드바에서 먼저 DB를 읽기 위함)
+# DB 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ==========================================
@@ -25,36 +25,30 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 with st.sidebar:
     st.header("⚙️ 관리자 사전 설정")
     
-    # 1. '설정' 시트에서 기존 저장된 세팅값 불러오기
     settings_dict = {}
     try:
-        # ttl=0 으로 항상 최신 설정값을 읽어옴
         settings_df = conn.read(worksheet="설정", ttl=0)
-        # 데이터가 존재하면 딕셔너리로 변환 (항목 이름 -> 값)
         if not settings_df.empty and "항목" in settings_df.columns and "값" in settings_df.columns:
             settings_dict = dict(zip(settings_df["항목"], settings_df["값"]))
     except Exception:
-        pass # 시트가 비어있거나 에러가 나면 무시하고 기본값 세팅
+        pass 
         
-    # 저장된 값을 가져오는 도우미 함수 (저장된 게 없으면 default_val 사용)
     def get_saved_val(key, default_val):
         try:
             return int(settings_dict.get(key, default_val))
         except:
             return default_val
 
-    # 2. 총 투표지 매수 세팅
     TOTAL_BALLOTS = st.number_input(
         "총 투표지 매수 (각 투표지별)", 
         min_value=1, 
-        value=get_saved_val("총매수", 2400), # DB값 불러오기
+        value=get_saved_val("총매수", 2400),
         step=100
     )
     st.success(f"현재 설정: 각 **{TOTAL_BALLOTS}**장")
     
     st.divider()
     
-    # 3. 투표지별 시작 번호 세팅
     st.subheader("📌 투표지별 시작번호 세팅")
     start_numbers = {} 
     
@@ -62,16 +56,13 @@ with st.sidebar:
         start_numbers[b_type] = st.number_input(
             f"{b_type} 시작번호", 
             min_value=1, 
-            value=get_saved_val(b_type, 1000), # DB값 불러오기
+            value=get_saved_val(b_type, 1000), 
             step=1, 
             key=f"side_start_{b_type}"
         )
         
     st.write("---")
-    
-    # 4. 설정값을 DB에 영구 저장하는 버튼
     if st.button("💾 위 설정값을 DB에 영구 저장", type="primary"):
-        # 저장할 데이터프레임 만들기
         new_settings = {
             "항목": ["총매수"] + ballot_types,
             "값": [TOTAL_BALLOTS] + list(start_numbers.values())
@@ -79,12 +70,11 @@ with st.sidebar:
         new_settings_df = pd.DataFrame(new_settings)
         
         try:
-            # '설정' 탭에 데이터 덮어쓰기
             conn.update(worksheet="설정", data=new_settings_df)
             st.cache_data.clear()
-            st.success("✅ 설정이 구글 시트에 안전하게 저장되었습니다! 내일 아침에도 이 번호가 유지됩니다.")
+            st.success("✅ 설정이 구글 시트에 안전하게 저장되었습니다!")
         except Exception as e:
-            st.error(f"저장 실패: 구글 시트에 '설정'이라는 이름의 탭을 만들었는지 확인해주세요. ({e})")
+            st.error(f"저장 실패: ({e})")
 
 # ==========================================
 # 메인 화면
@@ -92,7 +82,7 @@ with st.sidebar:
 st.subheader("🗳️ 반여1동 제7투 투표 현황")
 
 # 탭 3개로 분리
-tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 시간별 투표 현황", "🛠️ 데이터 수정 및 초기화"])
+tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 직관적 투표 현황", "🛠️ 데이터 수정 및 초기화"])
 
 # ==========================================
 # 탭 1: 투표 현황 입력 및 DB 저장
@@ -146,57 +136,65 @@ with tab1:
                         exclusion_reasons[f"{b_type}_제외사유"] = ex_text
                         st.divider()
 
-        submit_button = st.form_submit_button(label="정합성 검사 및 DB에 저장")
+        # 버튼 이름 변경
+        submit_button = st.form_submit_button(label="💾 투표 현황 DB에 저장 (정합성 무관하게 저장됨)")
 
     if submit_button:
-        voter_counts = list(results.values())
-        if len(set(voter_counts)) == 1:
-            st.success(f"✅ 정합성 통과! (현재 투표자 {voter_counts[0]}명)")
+        # DB 저장은 무조건 실행
+        KST = timezone(timedelta(hours=9))
+        now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+        
+        new_data = {"시간": now}
+        new_data.update(results)
+        new_data.update(exclusion_reasons)
+        
+        new_df = pd.DataFrame([new_data])
+        
+        try:
+            existing_data = conn.read(worksheet="Sheet1", ttl=0)
+            if existing_data.empty:
+                updated_data = new_df
+            else:
+                updated_data = pd.concat([existing_data.dropna(how='all'), new_df], ignore_index=True)
             
-            KST = timezone(timedelta(hours=9))
-            now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+            conn.update(worksheet="Sheet1", data=updated_data)
+            st.cache_data.clear()
             
-            new_data = {"시간": now}
-            new_data.update(results)
-            new_data.update(exclusion_reasons)
-            
-            new_df = pd.DataFrame([new_data])
-            
-            try:
-                existing_data = conn.read(worksheet="Sheet1", ttl=0)
-                if existing_data.empty:
-                    updated_data = new_df
-                else:
-                    updated_data = pd.concat([existing_data.dropna(how='all'), new_df], ignore_index=True)
-                
-                conn.update(worksheet="Sheet1", data=updated_data)
-                st.cache_data.clear()
+            # 저장 후 화면 상단에 정합성 결과 메시지 띄우기
+            voter_counts = list(results.values())
+            if len(set(voter_counts)) == 1:
                 st.balloons()
-                st.success("데이터가 저장되었습니다!")
-            except Exception as e:
-                st.error(f"DB 저장 오류: {e}")
-        else:
-            st.error("❌ 정합성 오류: 투표지별 인원수가 다릅니다.")
-            for k, v in results.items():
-                st.write(f"- {k}: {v}명")
+                st.success(f"✅ 데이터 저장 완료 및 정합성 완벽 일치! (현재 {voter_counts[0]}명)")
+            else:
+                st.warning("⚠️ 데이터는 정상적으로 저장되었습니다. (단, 현재 1교부처와 2교부처의 투표자 수가 다릅니다. 점검 시 확인하세요.)")
+                
+        except Exception as e:
+            st.error(f"DB 저장 오류: {e}")
 
 # ==========================================
-# 탭 2: 시간별 투표 현황 (대시보드)
+# 탭 2: 시간별 투표 현황 (직관적 대시보드)
 # ==========================================
 with tab2:
-    st.subheader("📈 시간별 투표 진행 현황")
+    st.subheader("📈 시간별 누적 투표자 추이 (부산시장 기준)")
     if st.button("🔄 데이터 최신화", key="refresh_tab2"):
         st.cache_data.clear()
         
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
-        if not df.empty and "시간" in df.columns:
-            chart_data = df.set_index("시간")[ballot_types]
-            st.line_chart(chart_data)
+        if not df.empty and "부산시장" in df.columns:
+            # 시간순 정렬
+            df['시간'] = pd.to_datetime(df['시간'])
+            df = df.sort_values(by="시간", ascending=True) # 차트를 위해 과거->최신 순서 정렬
             
-            st.markdown("##### 📋 상세 집계 내역")
-            display_df = df.sort_values(by="시간", ascending=False).reset_index(drop=True)
-            st.dataframe(display_df, width="stretch")
+            # 1. 가장 최신 투표자 수 크게 보여주기
+            latest_voters = df.iloc[-1]["부산시장"] # 제일 마지막(최신) 데이터
+            st.metric(label="현재 총 투표자 수", value=f"{latest_voters} 명")
+            
+            st.divider()
+            
+            # 2. 부산시장 추이만 꺾은선 차트로 표시
+            chart_data = df.set_index("시간")[["부산시장"]]
+            st.line_chart(chart_data)
         else:
             st.info("입력된 데이터가 없습니다.")
     except Exception as e:
@@ -212,6 +210,8 @@ with tab3:
     try:
         edit_df = conn.read(worksheet="Sheet1", ttl=0)
         if not edit_df.empty and "시간" in edit_df.columns:
+            # 시간을 기준으로 내림차순(최신순) 정렬하여 표시
+            edit_df = edit_df.sort_values(by="시간", ascending=False).reset_index(drop=True)
             edited_df = st.data_editor(edit_df, num_rows="dynamic", width="stretch", key="data_editor")
             
             if st.button("💾 수정된 데이터 DB에 반영하기"):
