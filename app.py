@@ -6,22 +6,40 @@ from datetime import datetime
 # 페이지 설정
 st.set_page_config(page_title="🗳️ 반여1동 제7투 투표 현황", layout="wide")
 
+# 투표지 6종류 정의
+ballot_types = ["부산시교육감", "부산시장", "해운대구청장", "부산시의원", "해운대구의원", "(비례대표)부산시의원"]
+
 # ==========================================
-# 사이드바: 기본 설정 (총 매수 변경)
+# 사이드바: 관리자 사전 세팅
 # ==========================================
 with st.sidebar:
-    st.header("⚙️ 선거구 기본 설정")
-    # 총 투표지 매수를 언제든 수정할 수 있음
+    st.header("⚙️ 관리자 사전 설정")
+    
+    # 1. 총 투표지 매수
     TOTAL_BALLOTS = st.number_input("총 투표지 매수 (각 투표지별)", min_value=1, value=2400, step=100)
     st.success(f"현재 설정: 각 **{TOTAL_BALLOTS}**장")
+    
+    st.divider()
+    
+    # 2. 투표지별 시작 번호 세팅
+    st.subheader("📌 투표지별 시작번호 세팅")
+    start_numbers = {} # 세팅된 시작 번호를 저장할 딕셔너리
+    
+    for b_type in ballot_types:
+        # 사이드바에서 입력받은 값을 start_numbers 딕셔너리에 저장
+        start_numbers[b_type] = st.number_input(
+            f"{b_type} 시작번호", 
+            min_value=1, 
+            value=1000, 
+            step=1, 
+            key=f"side_start_{b_type}"
+        )
 
-st.title("🗳️ 반여1동 제7투 투표 현황")
+# 메인 타이틀 (글씨 크기 축소를 위해 st.header 사용)
+st.header("🗳️ 반여1동 제7투 투표 현황")
 
 # 구글 시트 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
-
-# 투표지 6종류 정의
-ballot_types = ["부산시교육감", "부산시장", "해운대구청장", "부산시의원", "해운대구의원", "(비례대표)부산시의원"]
 
 # 탭 3개로 분리
 tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 시간별 투표 현황", "🛠️ 데이터 수정 및 초기화"])
@@ -41,8 +59,15 @@ with tab1:
         for i, b_type in enumerate(ballot_types):
             with cols[i % 3]:
                 st.subheader(f"📄 {b_type}")
-                start = st.number_input(f"시작 번호", min_value=1, value=1000, key=f"{b_type}_start")
-                current = st.number_input(f"현재 맨 위 번호", min_value=1, value=1000, key=f"{b_type}_current")
+                
+                # 사이드바에서 설정한 시작 번호를 가져옴
+                start = start_numbers[b_type]
+                
+                # disabled=True 를 사용하여 메인화면에서는 수정 불가(읽기 전용)로 만듦
+                st.number_input(f"시작 번호 (수정불가)", value=start, disabled=True, key=f"main_start_{b_type}")
+                
+                # 현재 맨 위 번호 입력 (이것만 사무원들이 입력)
+                current = st.number_input(f"현재 맨 위 번호", min_value=1, value=start, key=f"{b_type}_current")
                 
                 ex_text = st.text_input(
                     f"제외 번호/사유 (쉼표 구분)", 
@@ -66,7 +91,7 @@ with tab1:
                     voter_count = 0
                     remaining_papers = TOTAL_BALLOTS
                     
-                # 추산 정보 표시 (남은 투표지 추가)
+                # 추산 정보 표시
                 st.info(f"""
                 👉 **투표자:** {voter_count}명 (제외 {excluded_count}장)  
                 📦 **남은 투표지:** {remaining_papers}장
@@ -124,7 +149,6 @@ with tab2:
             
             st.markdown("##### 📋 상세 집계 내역")
             display_df = df.sort_values(by="시간", ascending=False).reset_index(drop=True)
-            # 경고 메시지 해결: use_container_width=True 대신 width="stretch" 사용
             st.dataframe(display_df, width="stretch")
         else:
             st.info("입력된 데이터가 없습니다.")
@@ -141,7 +165,6 @@ with tab3:
     try:
         edit_df = conn.read(worksheet="Sheet1", ttl=0)
         if not edit_df.empty and "시간" in edit_df.columns:
-            # 경고 메시지 해결: use_container_width=True 대신 width="stretch" 사용
             edited_df = st.data_editor(edit_df, num_rows="dynamic", width="stretch", key="data_editor")
             
             if st.button("💾 수정된 데이터 DB에 반영하기"):
@@ -156,17 +179,13 @@ with tab3:
 
     st.divider()
     
-    # ⚠️ 전체 초기화 영역 (안전장치 강화)
     st.subheader("⚠️ 데이터 전체 초기화 (리셋)")
     st.warning("선거 전 테스트용으로 입력한 데이터를 모두 지울 때 사용하세요. 이 작업은 되돌릴 수 없습니다!")
     
-    # 체크박스
     confirm_delete = st.checkbox("네, 모든 데이터를 삭제하는 것에 동의합니다.")
     
-    # disabled 파라미터를 사용하여 체크박스가 True일 때만 버튼 클릭 가능
     if st.button("🗑️ 전체 데이터 삭제 (실행)", type="primary", disabled=not confirm_delete):
         try:
-            # 헤더(시간)만 남기고 빈 데이터프레임으로 덮어쓰기
             empty_df = pd.DataFrame(columns=["시간"]) 
             conn.update(worksheet="Sheet1", data=empty_df)
             st.cache_data.clear()
