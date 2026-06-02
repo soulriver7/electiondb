@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 # 페이지 설정
-st.set_page_config(page_title="지방선거 투표 현황 트래커", layout="wide")
+st.set_page_config(page_title="🗳️ 반여1동 제7투 투표 현황", layout="wide")
 
 # ==========================================
 # 사이드바: 기본 설정 (총 매수 변경)
@@ -15,7 +15,7 @@ with st.sidebar:
     TOTAL_BALLOTS = st.number_input("총 투표지 매수 (각 투표지별)", min_value=1, value=2400, step=100)
     st.success(f"현재 설정: 각 **{TOTAL_BALLOTS}**장")
 
-st.title("🗳️ 제X회 지방선거 실시간 투표 트래커")
+st.title("🗳️ 반여1동 제7투 투표 현황")
 
 # 구글 시트 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
