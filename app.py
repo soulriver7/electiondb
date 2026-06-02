@@ -81,7 +81,6 @@ with st.sidebar:
 # ==========================================
 st.subheader("🗳️ 반여1동 제7투 투표 현황")
 
-# 탭 3개로 분리
 tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 직관적 투표 현황", "🛠️ 데이터 수정 및 초기화"])
 
 # ==========================================
@@ -90,8 +89,19 @@ tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 직관적 투표 
 with tab1:
     st.write("각 투표지별 현황과 제외(오기/훼손) 번호를 입력해주세요.")
     
+    # 🚨 [추가] DB에서 가장 마지막(최신) 데이터 가져오기 로직
+    latest_row = None
+    try:
+        latest_data_df = conn.read(worksheet="Sheet1", ttl=0)
+        if not latest_data_df.empty and "시간" in latest_data_df.columns:
+            # 시간순으로 정렬 후 가장 마지막 행 추출
+            latest_row = latest_data_df.sort_values(by="시간").iloc[-1]
+    except Exception:
+        pass # 비어있거나 에러가 나면 그냥 통과(시작번호를 기본값으로 씀)
+
     results = {}
     exclusion_reasons = {}
+    current_numbers_to_save = {} # 현재 번호도 DB에 저장하기 위한 딕셔너리
     
     with st.form("voting_form"):
         for i in range(0, len(ballot_types), 3):
@@ -105,7 +115,17 @@ with tab1:
                         
                         start = start_numbers[b_type]
                         st.number_input(f"시작 번호 (수정불가)", value=start, disabled=True, key=f"main_start_{b_type}")
-                        current = st.number_input(f"현재 맨 위 번호", min_value=1, value=start, key=f"{b_type}_current")
+                        
+                        # 🚨 [추가] DB에 저장된 최근 '현재 번호'가 있으면 그걸 기본값으로 세팅
+                        default_current = start
+                        current_key = f"{b_type}_현재번호"
+                        if latest_row is not None and current_key in latest_row:
+                            saved_val = latest_row[current_key]
+                            if pd.notna(saved_val): # 값이 비어있지 않으면
+                                default_current = int(saved_val)
+                                
+                        # 방금 구한 default_current를 value에 넣어줌
+                        current = st.number_input(f"현재 맨 위 번호", min_value=1, value=default_current, key=f"{b_type}_current")
                         
                         ex_text = st.text_input(
                             f"제외 번호/사유 (쉼표 구분)", 
@@ -134,19 +154,19 @@ with tab1:
                         
                         results[b_type] = voter_count
                         exclusion_reasons[f"{b_type}_제외사유"] = ex_text
+                        current_numbers_to_save[current_key] = current # DB 저장용 딕셔너리에 추가
                         st.divider()
 
-        # 버튼 이름 변경
         submit_button = st.form_submit_button(label="💾 투표 현황 DB에 저장 (정합성 무관하게 저장됨)")
 
     if submit_button:
-        # DB 저장은 무조건 실행
         KST = timezone(timedelta(hours=9))
         now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
         
         new_data = {"시간": now}
         new_data.update(results)
         new_data.update(exclusion_reasons)
+        new_data.update(current_numbers_to_save) # 🚨 현재 번호도 함께 병합해서 DB에 전송
         
         new_df = pd.DataFrame([new_data])
         
@@ -160,13 +180,15 @@ with tab1:
             conn.update(worksheet="Sheet1", data=updated_data)
             st.cache_data.clear()
             
-            # 저장 후 화면 상단에 정합성 결과 메시지 띄우기
             voter_counts = list(results.values())
             if len(set(voter_counts)) == 1:
                 st.balloons()
                 st.success(f"✅ 데이터 저장 완료 및 정합성 완벽 일치! (현재 {voter_counts[0]}명)")
             else:
                 st.warning("⚠️ 데이터는 정상적으로 저장되었습니다. (단, 현재 1교부처와 2교부처의 투표자 수가 다릅니다. 점검 시 확인하세요.)")
+            
+            # 저장 후 화면을 새로고침하여 바뀐 기본값이 즉시 적용되도록 함
+            st.rerun()
                 
         except Exception as e:
             st.error(f"DB 저장 오류: {e}")
@@ -182,18 +204,16 @@ with tab2:
     try:
         df = conn.read(worksheet="Sheet1", ttl=0)
         if not df.empty and "부산시장" in df.columns:
-            # 시간순 정렬
             df['시간'] = pd.to_datetime(df['시간'])
-            df = df.sort_values(by="시간", ascending=True) # 차트를 위해 과거->최신 순서 정렬
+            df = df.sort_values(by="시간", ascending=True) 
             
-            # 1. 가장 최신 투표자 수 크게 보여주기
-            latest_voters = df.iloc[-1]["부산시장"] # 제일 마지막(최신) 데이터
+            latest_voters = df.iloc[-1]["부산시장"] 
             st.metric(label="현재 총 투표자 수", value=f"{latest_voters} 명")
             
             st.divider()
             
-            # 2. 부산시장 추이만 꺾은선 차트로 표시
-            chart_data = df.set_index("시간")[["부산시장"]]
+            df['시간_표시'] = df['시간'].dt.strftime('%H:%M')
+            chart_data = df.set_index("시간_표시")[["부산시장"]]
             st.line_chart(chart_data)
         else:
             st.info("입력된 데이터가 없습니다.")
@@ -210,7 +230,6 @@ with tab3:
     try:
         edit_df = conn.read(worksheet="Sheet1", ttl=0)
         if not edit_df.empty and "시간" in edit_df.columns:
-            # 시간을 기준으로 내림차순(최신순) 정렬하여 표시
             edit_df = edit_df.sort_values(by="시간", ascending=False).reset_index(drop=True)
             edited_df = st.data_editor(edit_df, num_rows="dynamic", width="stretch", key="data_editor")
             
