@@ -1,12 +1,12 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime, timezone, timedelta # 한국 시간 패치
+from datetime import datetime, timezone, timedelta
 
 # 페이지 설정
 st.set_page_config(page_title="지방선거 투표 현황 트래커", layout="wide")
 
-# 🚨 투표지 6종류 이름 및 순서 업데이트
+# 투표지 6종류 이름 및 순서
 ballot_types = [
     "부산시교육감", 
     "부산시장", 
@@ -16,17 +16,45 @@ ballot_types = [
     "(비례대표)부산시의원"
 ]
 
+# 🚨 DB 연결 코드를 상단으로 이동 (사이드바에서 먼저 DB를 읽기 위함)
+conn = st.connection("gsheets", type=GSheetsConnection)
+
 # ==========================================
-# 사이드바: 관리자 사전 세팅
+# 사이드바: 관리자 사전 세팅 (DB 연동)
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 관리자 사전 설정")
     
-    TOTAL_BALLOTS = st.number_input("총 투표지 매수 (각 투표지별)", min_value=1, value=2400, step=100)
+    # 1. '설정' 시트에서 기존 저장된 세팅값 불러오기
+    settings_dict = {}
+    try:
+        # ttl=0 으로 항상 최신 설정값을 읽어옴
+        settings_df = conn.read(worksheet="설정", ttl=0)
+        # 데이터가 존재하면 딕셔너리로 변환 (항목 이름 -> 값)
+        if not settings_df.empty and "항목" in settings_df.columns and "값" in settings_df.columns:
+            settings_dict = dict(zip(settings_df["항목"], settings_df["값"]))
+    except Exception:
+        pass # 시트가 비어있거나 에러가 나면 무시하고 기본값 세팅
+        
+    # 저장된 값을 가져오는 도우미 함수 (저장된 게 없으면 default_val 사용)
+    def get_saved_val(key, default_val):
+        try:
+            return int(settings_dict.get(key, default_val))
+        except:
+            return default_val
+
+    # 2. 총 투표지 매수 세팅
+    TOTAL_BALLOTS = st.number_input(
+        "총 투표지 매수 (각 투표지별)", 
+        min_value=1, 
+        value=get_saved_val("총매수", 2400), # DB값 불러오기
+        step=100
+    )
     st.success(f"현재 설정: 각 **{TOTAL_BALLOTS}**장")
     
     st.divider()
     
+    # 3. 투표지별 시작 번호 세팅
     st.subheader("📌 투표지별 시작번호 세팅")
     start_numbers = {} 
     
@@ -34,16 +62,34 @@ with st.sidebar:
         start_numbers[b_type] = st.number_input(
             f"{b_type} 시작번호", 
             min_value=1, 
-            value=1000, 
+            value=get_saved_val(b_type, 1000), # DB값 불러오기
             step=1, 
             key=f"side_start_{b_type}"
         )
+        
+    st.write("---")
+    
+    # 4. 설정값을 DB에 영구 저장하는 버튼
+    if st.button("💾 위 설정값을 DB에 영구 저장", type="primary"):
+        # 저장할 데이터프레임 만들기
+        new_settings = {
+            "항목": ["총매수"] + ballot_types,
+            "값": [TOTAL_BALLOTS] + list(start_numbers.values())
+        }
+        new_settings_df = pd.DataFrame(new_settings)
+        
+        try:
+            # '설정' 탭에 데이터 덮어쓰기
+            conn.update(worksheet="설정", data=new_settings_df)
+            st.cache_data.clear()
+            st.success("✅ 설정이 구글 시트에 안전하게 저장되었습니다! 내일 아침에도 이 번호가 유지됩니다.")
+        except Exception as e:
+            st.error(f"저장 실패: 구글 시트에 '설정'이라는 이름의 탭을 만들었는지 확인해주세요. ({e})")
 
-# 메인 타이틀 (크기 조정)
+# ==========================================
+# 메인 화면
+# ==========================================
 st.subheader("🗳️ 반여1동 제7투 투표 현황")
-
-# 구글 시트 연결
-conn = st.connection("gsheets", type=GSheetsConnection)
 
 # 탭 3개로 분리
 tab1, tab2, tab3 = st.tabs(["📝 투표 현황 입력", "📊 시간별 투표 현황", "🛠️ 데이터 수정 및 초기화"])
@@ -58,9 +104,8 @@ with tab1:
     exclusion_reasons = {}
     
     with st.form("voting_form"):
-        # 🚨 모바일 배열 문제 해결: 3개씩(한 줄) 묶어서 렌더링
         for i in range(0, len(ballot_types), 3):
-            cols = st.columns(3) # 한 줄에 3칸 생성
+            cols = st.columns(3)
             
             for j in range(3):
                 if i + j < len(ballot_types):
@@ -108,7 +153,6 @@ with tab1:
         if len(set(voter_counts)) == 1:
             st.success(f"✅ 정합성 통과! (현재 투표자 {voter_counts[0]}명)")
             
-            # 🚨 한국 시간(KST) 패치 적용
             KST = timezone(timedelta(hours=9))
             now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
             
