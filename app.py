@@ -1,13 +1,20 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta # 한국 시간 패치
 
 # 페이지 설정
-st.set_page_config(page_title="🗳️ 반여1동 제7투 투표 현황", layout="wide")
+st.set_page_config(page_title="지방선거 투표 현황 트래커", layout="wide")
 
-# 투표지 6종류 정의
-ballot_types = ["부산시교육감", "부산시장", "해운대구청장", "부산시의원", "해운대구의원", "(비례대표)부산시의원"]
+# 🚨 투표지 6종류 이름 및 순서 업데이트
+ballot_types = [
+    "부산시교육감", 
+    "부산시장", 
+    "해운대구청장", 
+    "부산시의원", 
+    "해운대구의원", 
+    "(비례대표)부산시의원"
+]
 
 # ==========================================
 # 사이드바: 관리자 사전 세팅
@@ -15,18 +22,15 @@ ballot_types = ["부산시교육감", "부산시장", "해운대구청장", "부
 with st.sidebar:
     st.header("⚙️ 관리자 사전 설정")
     
-    # 1. 총 투표지 매수
     TOTAL_BALLOTS = st.number_input("총 투표지 매수 (각 투표지별)", min_value=1, value=2400, step=100)
     st.success(f"현재 설정: 각 **{TOTAL_BALLOTS}**장")
     
     st.divider()
     
-    # 2. 투표지별 시작 번호 세팅
     st.subheader("📌 투표지별 시작번호 세팅")
-    start_numbers = {} # 세팅된 시작 번호를 저장할 딕셔너리
+    start_numbers = {} 
     
     for b_type in ballot_types:
-        # 사이드바에서 입력받은 값을 start_numbers 딕셔너리에 저장
         start_numbers[b_type] = st.number_input(
             f"{b_type} 시작번호", 
             min_value=1, 
@@ -35,8 +39,8 @@ with st.sidebar:
             key=f"side_start_{b_type}"
         )
 
-# 메인 타이틀 (글씨 크기 축소를 위해 st.header 사용)
-st.header("🗳️ 반여1동 제7투 투표 현황")
+# 메인 타이틀 (크기 조정)
+st.subheader("🗳️ 반여1동 제7투 투표 현황")
 
 # 구글 시트 연결
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -54,52 +58,48 @@ with tab1:
     exclusion_reasons = {}
     
     with st.form("voting_form"):
-        cols = st.columns(3)
-        
-        for i, b_type in enumerate(ballot_types):
-            with cols[i % 3]:
-                st.subheader(f"📄 {b_type}")
-                
-                # 사이드바에서 설정한 시작 번호를 가져옴
-                start = start_numbers[b_type]
-                
-                # disabled=True 를 사용하여 메인화면에서는 수정 불가(읽기 전용)로 만듦
-                st.number_input(f"시작 번호 (수정불가)", value=start, disabled=True, key=f"main_start_{b_type}")
-                
-                # 현재 맨 위 번호 입력 (이것만 사무원들이 입력)
-                current = st.number_input(f"현재 맨 위 번호", min_value=1, value=start, key=f"{b_type}_current")
-                
-                ex_text = st.text_input(
-                    f"제외 번호/사유 (쉼표 구분)", 
-                    placeholder="ex: 1015, 1020(오기)", 
-                    key=f"{b_type}_ex_text"
-                )
-                
-                # 제외 매수 계산
-                if ex_text.strip():
-                    excluded_list = [x.strip() for x in ex_text.split(',') if x.strip()]
-                    excluded_count = len(excluded_list)
-                else:
-                    excluded_count = 0
-                
-                # 투표자 수 및 남은 투표지 계산
-                if current >= start:
-                    used_papers = current - start # 배부된 총 투표지(오기 포함)
-                    voter_count = used_papers - excluded_count # 순수 투표자 수
-                    remaining_papers = TOTAL_BALLOTS - used_papers # 남은 투표지 수
-                else:
-                    voter_count = 0
-                    remaining_papers = TOTAL_BALLOTS
-                    
-                # 추산 정보 표시
-                st.info(f"""
-                👉 **투표자:** {voter_count}명 (제외 {excluded_count}장)  
-                📦 **남은 투표지:** {remaining_papers}장
-                """)
-                
-                results[b_type] = voter_count
-                exclusion_reasons[f"{b_type}_제외사유"] = ex_text
-                st.divider()
+        # 🚨 모바일 배열 문제 해결: 3개씩(한 줄) 묶어서 렌더링
+        for i in range(0, len(ballot_types), 3):
+            cols = st.columns(3) # 한 줄에 3칸 생성
+            
+            for j in range(3):
+                if i + j < len(ballot_types):
+                    b_type = ballot_types[i + j]
+                    with cols[j]:
+                        st.subheader(f"📄 {b_type}")
+                        
+                        start = start_numbers[b_type]
+                        st.number_input(f"시작 번호 (수정불가)", value=start, disabled=True, key=f"main_start_{b_type}")
+                        current = st.number_input(f"현재 맨 위 번호", min_value=1, value=start, key=f"{b_type}_current")
+                        
+                        ex_text = st.text_input(
+                            f"제외 번호/사유 (쉼표 구분)", 
+                            placeholder="ex: 1015, 1020(오기)", 
+                            key=f"{b_type}_ex_text"
+                        )
+                        
+                        if ex_text.strip():
+                            excluded_list = [x.strip() for x in ex_text.split(',') if x.strip()]
+                            excluded_count = len(excluded_list)
+                        else:
+                            excluded_count = 0
+                        
+                        if current >= start:
+                            used_papers = current - start 
+                            voter_count = used_papers - excluded_count 
+                            remaining_papers = TOTAL_BALLOTS - used_papers 
+                        else:
+                            voter_count = 0
+                            remaining_papers = TOTAL_BALLOTS
+                            
+                        st.info(f"""
+                        👉 **투표자:** {voter_count}명 (제외 {excluded_count}장)  
+                        📦 **남은 투표지:** {remaining_papers}장
+                        """)
+                        
+                        results[b_type] = voter_count
+                        exclusion_reasons[f"{b_type}_제외사유"] = ex_text
+                        st.divider()
 
         submit_button = st.form_submit_button(label="정합성 검사 및 DB에 저장")
 
@@ -108,7 +108,10 @@ with tab1:
         if len(set(voter_counts)) == 1:
             st.success(f"✅ 정합성 통과! (현재 투표자 {voter_counts[0]}명)")
             
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 🚨 한국 시간(KST) 패치 적용
+            KST = timezone(timedelta(hours=9))
+            now = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+            
             new_data = {"시간": now}
             new_data.update(results)
             new_data.update(exclusion_reasons)
